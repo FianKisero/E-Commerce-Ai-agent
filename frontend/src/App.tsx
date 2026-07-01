@@ -7,8 +7,8 @@ type EventItem = {
     name: string;
     price: string;
     merchant: string;
-    compliance: string[];
-    link: string;
+    compliance?: string[];
+    link?: string;
   };
   actions?: string[];
 };
@@ -16,22 +16,45 @@ type EventItem = {
 export default function App() {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [connected, setConnected] = useState(false);
+  const [prompt, setPrompt] = useState('laptop for remote teams');
+  const [isRunning, setIsRunning] = useState(false);
+  const [statusText, setStatusText] = useState('Idle');
+
+  const runWorkflow = async (value: string) => {
+    setIsRunning(true);
+    setStatusText('Running workflow...');
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: value }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Workflow request failed');
+      }
+
+      const data = (await response.json()) as { events: EventItem[] };
+      setEvents(data.events ?? []);
+      setConnected(true);
+      setStatusText('Workflow complete');
+    } catch (error) {
+      setConnected(false);
+      setStatusText(error instanceof Error ? error.message : 'Workflow request failed');
+    } finally {
+      setIsRunning(false);
+    }
+  };
 
   useEffect(() => {
-    const ws = new WebSocket('ws://127.0.0.1:8000/ws');
-
-    ws.onopen = () => {
-      setConnected(true);
-      ws.send(JSON.stringify({ query: 'laptop for remote teams' }));
-    };
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data) as EventItem;
-      setEvents((prev) => [...prev, data]);
-    };
-    ws.onclose = () => setConnected(false);
-
-    return () => ws.close();
+    void runWorkflow(prompt);
   }, []);
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await runWorkflow(prompt);
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -43,10 +66,33 @@ export default function App() {
               <h1 className="mt-2 text-3xl font-semibold">E-Commerce Procurement Agent</h1>
             </div>
             <div className={`rounded-full px-3 py-1 text-sm ${connected ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-400'}`}>
-              {connected ? 'Live' : 'Connecting'}
+              {isRunning ? 'Running' : connected ? 'Live' : 'Connecting'}
             </div>
           </div>
         </header>
+
+        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-black/20">
+          <label htmlFor="prompt" className="text-sm font-medium text-slate-300">
+            User prompt
+          </label>
+          <div className="mt-3 flex flex-col gap-3 md:flex-row">
+            <input
+              id="prompt"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="Ask the agent to find a product or manage inventory"
+              className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none ring-0"
+            />
+            <button
+              type="submit"
+              disabled={isRunning}
+              className="rounded-xl bg-emerald-500 px-4 py-3 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isRunning ? 'Running...' : 'Run agent'}
+            </button>
+          </div>
+          <p className="mt-2 text-sm text-slate-400">{statusText}</p>
+        </form>
 
         <main className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
           <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
@@ -61,15 +107,17 @@ export default function App() {
                       <p className="mt-1 text-slate-300">Price: {event.product.price}</p>
                       <p className="text-slate-300">Merchant: {event.product.merchant}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
-                        {event.product.compliance.map((item) => (
+                        {(event.product.compliance ?? []).map((item) => (
                           <span key={item} className="rounded-full bg-emerald-500/15 px-3 py-1 text-sm text-emerald-300">
                             {item}
                           </span>
                         ))}
                       </div>
-                      <a href={event.product.link} target="_blank" rel="noreferrer" className="mt-3 inline-block text-blue-400">
-                        Verify on Site
-                      </a>
+                      {event.product.link && (
+                        <a href={event.product.link} target="_blank" rel="noreferrer" className="mt-3 inline-block text-blue-400">
+                          Verify on Site
+                        </a>
+                      )}
                     </div>
                   )}
                   {event.type === 'interrupt' && (
